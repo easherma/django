@@ -24,6 +24,14 @@ class Command(BaseCommand):
                 '"default" database.'
             ),
         )
+        parser.add_argument(
+            "--unapplied",
+            "-u",
+            action="store_true",
+            help=(
+                "Like `--list`, but only shows unapplied migrations"
+            ),
+        )
 
         formats = parser.add_mutually_exclusive_group()
         formats.add_argument(
@@ -55,7 +63,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.verbosity = options["verbosity"]
-
+        self.show_unapplied_only = options["unapplied"]
         # Get the database we're operating from
         db = options["database"]
         connection = connections[db]
@@ -63,7 +71,10 @@ class Command(BaseCommand):
         if options["format"] == "plan":
             return self.show_plan(connection, options["app_label"])
         else:
-            return self.show_list(connection, options["app_label"])
+            return self.show_list(connection,
+                                  options["app_label"],
+                                  show_unapplied_only=self.show_unapplied_only,
+                                  )
 
     def _validate_app_names(self, loader, app_names):
         has_bad_names = False
@@ -76,7 +87,7 @@ class Command(BaseCommand):
         if has_bad_names:
             sys.exit(2)
 
-    def show_list(self, connection, app_names=None):
+    def show_list(self, connection, app_names=None, show_unapplied_only=False):
         """
         Show a list of all migrations on the system, or only those of
         some named apps.
@@ -95,8 +106,8 @@ class Command(BaseCommand):
         # For each app, print its migrations in order from oldest (roots) to
         # newest (leaves).
         for app_name in app_names:
-            self.stdout.write(app_name, self.style.MIGRATE_LABEL)
             shown = set()
+            outputs = []
             for node in graph.leaf_nodes(app_name):
                 for plan_node in graph.forwards_plan(node):
                     if plan_node not in shown and plan_node[0] == app_name:
@@ -123,12 +134,20 @@ class Command(BaseCommand):
                                         "%Y-%m-%d %H:%M:%S"
                                     )
                                 )
-                            self.stdout.write(output)
+                            if not show_unapplied_only:
+                                outputs.append(output)
                         else:
-                            self.stdout.write(" [ ] %s" % title)
+                            output = " [ ] %s" % title
+                            outputs.append(output)
                         shown.add(plan_node)
+            if outputs:
+                self.stdout.write(app_name, self.style.MIGRATE_LABEL)
+                for output in outputs:
+                    self.stdout.write(output)
+
             # If we didn't print anything, then a small message
             if not shown:
+                self.stdout.write(app_name, self.style.MIGRATE_LABEL)
                 self.stdout.write(" (no migrations)", self.style.ERROR)
 
     def show_plan(self, connection, app_names=None):
